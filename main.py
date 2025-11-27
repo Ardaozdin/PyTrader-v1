@@ -5,16 +5,88 @@ import datetime
 import os
 from streamlit_lightweight_charts import renderLightweightCharts
 
-# Modüller
+# =============================================================================
+# 1. MODÜL VE STRATEJİ YÜKLEME (GÜVENLİ ALAN)
+# =============================================================================
 try:
     from core import veri_motoru as vm
     from core import teknik_analiz as ta
     from core import backtest as bm
     from core import db_manager as dbm
-    from strategies import strateji as sm
+    from strategies import strateji as sm  # Ana yönetici modül
 except ImportError as e:
-    st.error(f"Modül Hatası: {e}")
+    st.error(f"Çekirdek Modül Hatası: {e}")
     st.stop()
+
+# --- Dinamik Strateji Listesi Oluşturma ---
+# Bu liste, sadece başarıyla import edilen stratejileri içerir.
+MEVCUT_STRATEJILER = []
+
+# 1. AÇIK STRATEJİLER (GitHub'da var)
+try:
+    from strategies import st_pure_supertrend
+    from strategies import st_HMA_simple
+    from strategies import st_bollinger
+
+    MEVCUT_STRATEJILER.extend(
+        [
+            "Pure_Supertrend_Strategy",
+            "HMA_Simple_Strategy",
+            "Bollinger_Reversal_Strategy",
+        ]
+    )
+except ImportError:
+    # Eğer bu dosyalar yoksa bile program çökmesin (gerçi bunlar public ama önlem)
+    pass
+
+# 2. GİZLİ STRATEJİLER (Sadece sende var)
+# Tek tek deniyoruz. Dosya varsa listeye ekliyoruz.
+
+try:
+    from strategies import st_ema_rsi
+
+    MEVCUT_STRATEJILER.append("EMA_RSI_Strategy")
+except ImportError:
+    pass
+
+try:
+    from strategies import st_norm_macd
+
+    MEVCUT_STRATEJILER.append("Normalized_MACD_Strategy")
+except ImportError:
+    pass
+
+try:
+    from strategies import st_super_macd
+
+    MEVCUT_STRATEJILER.append("Supertrend_MACD_Strategy")
+except ImportError:
+    pass
+
+try:
+    from strategies import st_pivot_rev
+
+    MEVCUT_STRATEJILER.append("Pivot_Reversal_Strategy")
+except ImportError:
+    pass
+
+try:
+    from strategies import st_ai_trend
+
+    MEVCUT_STRATEJILER.append("AI_Trend_Predictor")
+except ImportError:
+    pass
+
+try:
+    from strategies import st_hyper_scalp
+
+    MEVCUT_STRATEJILER.append("Hyper_Scalp_Strategy")
+except ImportError:
+    pass
+
+# =============================================================================
+# VERİTABANI VE ARAYÜZ BAŞLANGICI
+# =============================================================================
 
 # --- VERİTABANI BAŞLATMA ---
 dbm.veritabanini_hazirla()
@@ -71,17 +143,9 @@ ayar_sozlugu = {
     "ema_aktif": True,
     "adx_aktif": True,
 }
-STRATEJI_LISTESI = [
-    "Pure_Supertrend_Strategy",
-    "Normalized_MACD_Strategy",
-    "EMA_RSI_Strategy",
-    "HMA_Simple_Strategy",
-    "Supertrend_MACD_Strategy",
-    "Pivot_Reversal_Strategy",
-    "AI_Trend_Predictor",
-    "Bollinger_Reversal_Strategy",
-    "Hyper_Scalp_Strategy",  # YENİ
-]
+
+# ARTIK STRATEJİ LİSTESİ DİNAMİK OLARAK YUKARIDAN GELİYOR
+STRATEJI_LISTESI = MEVCUT_STRATEJILER
 
 # BACKTEST AYARLARI
 if calisma_modu == "Tek Coin Analizi":
