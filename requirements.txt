@@ -1,0 +1,9 @@
+streamlit
+pandas
+pandas_ta
+ccxt
+numpy
+streamlit-lightweight-charts
+scikit-learn
+requests
+python-dotenv
