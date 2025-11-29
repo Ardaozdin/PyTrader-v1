@@ -57,9 +57,9 @@ except ImportError:
     pass
 
 try:
-    from strategies import st_super_macd
+    from strategies import st_ai_scalp
 
-    MEVCUT_STRATEJILER.append("Supertrend_MACD_Strategy")
+    MEVCUT_STRATEJILER.append("Ai_Scalp")
 except ImportError:
     pass
 

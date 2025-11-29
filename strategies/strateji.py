@@ -7,7 +7,7 @@ try:
     from strategies import st_ema_rsi
     from strategies import st_norm_macd
     from strategies import st_HMA_simple
-    from strategies import st_super_macd
+    from strategies import st_ai_scalp
     from strategies import st_pivot_rev
     from strategies import st_ai_trend
     from strategies import st_bollinger
@@ -18,7 +18,7 @@ except ImportError:
     import st_ema_rsi
     import st_norm_macd
     import st_HMA_simple
-    import st_super_macd
+    import st_ai_scalp
     import st_pivot_rev
     import st_ai_trend
     import st_bollinger
@@ -47,8 +47,8 @@ def sinyal_uret(df, strateji_tipi):
     elif strateji_tipi == "HMA_simple_Strategy":
         return st_HMA_simple.calistir(df)
 
-    elif strateji_tipi == "Supertrend_MACD_Strategy":
-        return st_super_macd.calistir(df)
+    elif strateji_tipi == "Ai_Scalp":
+        return st_ai_scalp.calistir(df)
 
     elif strateji_tipi == "Pivot_Reversal_Strategy":
         return st_pivot_rev.calistir(df)
