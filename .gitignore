@@ -8,5 +8,5 @@ strategies/st_ai_trend.py
 strategies/st_ema_rsi.py
 strategies/st_hyper_scalp.py
 strategies/st_pivot_rev.py
-strategies/st_super_macd.py
+strategies/st_ai_scalp.py
 strategies/st_norm_macd.py
