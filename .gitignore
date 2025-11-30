@@ -1,7 +1,29 @@
+--- PYTHON GEREKSİZLERİ ---
+
+pycache/
+*.py[cod]
+
+--- GÜVENLİK (En Önemlisi) ---
+
 .env
-__pycache__/
-*.pyc
-/data
+
+--- FRONTEND (React Kütüphaneleri) ---
+
+Bu klasör çok büyüktür, GitHub'a yüklenmez.
+
+frontend/node_modules/
+frontend/build/
+
+--- VERİTABANI (İşlem Geçmişin) ---
+
+data/*.db
+*.db
+*.sqlite3
+
+--- İŞLETİM SİSTEMİ GEREKSİZLERİ ---
+
+.DS_Store
+Thumbs.db
 
 # --- Gizli Stratejiler ---
 strategies/st_ai_trend.py
