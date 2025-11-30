@@ -3,6 +3,7 @@
 pycache/
 *.py[cod]
 
+
 --- GÜVENLİK (En Önemlisi) ---
 
 .env
@@ -20,6 +21,7 @@ data/*.db
 *.db
 *.sqlite3
 
+
 --- İŞLETİM SİSTEMİ GEREKSİZLERİ ---
 
 .DS_Store
@@ -32,3 +34,6 @@ strategies/st_hyper_scalp.py
 strategies/st_pivot_rev.py
 strategies/st_ai_scalp.py
 strategies/st_norm_macd.py
+
+
+node_modules/
