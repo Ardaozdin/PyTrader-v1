@@ -28,6 +28,6 @@ start "Streamlit Kumanda" cmd /k "streamlit run main.py"
 echo.
 echo ===================================================
 echo ✅ TUM SISTEMLER AKTIF!
-echo ⚠️  Kapatmak icin acilan pencereleri kapatabilirsin.
+echo 
 echo ===================================================
 pause

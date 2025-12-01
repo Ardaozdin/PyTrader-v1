@@ -2,29 +2,62 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
-from core.veri_motoru import veri_getir
+import sys
+import os
+
+# Core modülleri görebilmesi için yol ayarı
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# SENİN MODÜLLERİN
+from core import veri_motoru as vm
+from core import teknik_analiz as ta
+from core import backtest as bm
+from strategies import strateji as sm
 
 app = FastAPI()
 
+origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Standart Ayarlar
+AYARLAR = {
+    "sma_aktif": True,
+    "sma_len": 9,
+    "bb_aktif": True,
+    "cp_aktif": True,
+    "ema_aktif": True,
+    "adx_aktif": True,
+}
+
 
 @app.get("/data")
-def get_data(symbol: str, timeframe: str):
+def get_data(
+    symbol: str,
+    timeframe: str,
+    strategy: str = "Pure_Supertrend_Strategy",
+    tp: float = 0.006,
+    sl: float = 0.01,
+):
+    print(
+        f"📡 İSTEK GELDİ: {symbol} | {timeframe} | {strategy}"
+    )  # Terminalde görmek için
+
     try:
-        # 1. Veriyi Çek
-        df, ticker = veri_getir(symbol, timeframe)
+        # 1. VERİYİ ÇEK
+        df, ticker = vm.veri_getir(symbol, timeframe)
 
         if df is None or df.empty:
+            print("❌ Veri boş geldi.")
             return []
 
-        # 2. Tarih Formatını Düzenle
+        # 2. FORMAT DÜZELTME VE SIRALAMA (Çok Önemli)
         if isinstance(df.index, pd.DatetimeIndex):
             df = df.reset_index()
 
@@ -43,37 +76,65 @@ def get_data(symbol: str, timeframe: str):
         else:
             return []
 
-        # 3. İNDİKATÖR (SMA 9 - İsteğine Göre Güncellendi)
-        df["sma"] = df["close"].rolling(window=9).mean()
-
-        # 4. AL/SAT SİNYALLERİ (SMA Kesişimi)
-        df["signal"] = 0  # 0: Yok, 1: AL, -1: SAT
-
-        df["prev_close"] = df["close"].shift(1)
-        df["prev_sma"] = df["sma"].shift(1)
-
-        # AL: Fiyat SMA'yı aşağıdan yukarı keserse
-        df.loc[
-            (df["close"] > df["sma"]) & (df["prev_close"] <= df["prev_sma"]), "signal"
-        ] = 1
-
-        # SAT: Fiyat SMA'yı yukarıdan aşağı keserse
-        df.loc[
-            (df["close"] < df["sma"]) & (df["prev_close"] >= df["prev_sma"]), "signal"
-        ] = -1
-
-        # 5. Temizlik ve Sıralama
+        # VERİYİ ESKİDEN YENİYE SIRALA (TradingView Kuralı)
         df = df.sort_values("time", ascending=True)
-        df = df.drop_duplicates(subset=["time"], keep="last")
-        df = df.fillna(0)
+        df = df.reset_index(drop=True)
 
-        # Gerekli sütunları seç
-        final_df = df[["time", "open", "high", "low", "close", "sma", "signal"]]
+        # 3. İNDİKATÖRLERİ EKLE
+        df = ta.indikator_ekle(df, AYARLAR)
+        df.fillna(0, inplace=True)
 
-        return final_df.to_dict(orient="records")
+        # 4. STRATEJİ SİNYALLERİNİ ÜRET
+        try:
+            df = sm.sinyal_uret(df, strategy)
+        except:
+            # Hata olursa varsayılanı kullan
+            df = sm.sinyal_uret(df, "Pure_Supertrend_Strategy")
+
+        # 5. BACKTEST YAP (Gerçek İşlemleri Bul)
+        # Backtest motoru da sıralı veri ister, veri zaten sıralı.
+        sonuc, gecmis, df_final = bm.backtest_yap(
+            df, 1000, tp_oran=float(tp), sl_oran=float(sl)
+        )
+
+        # 6. İŞLEM GEÇMİŞİNİ GRAFİK SİNYALİNE ÇEVİR
+        # Sadece Backtest'in onayladığı (Giriş/Çıkış) noktalarına ok koyuyoruz.
+        df_final["signal"] = 0
+
+        if gecmis:
+            trades_df = pd.DataFrame(gecmis)
+            # Tarih formatını eşle
+            trades_df["timestamp"] = pd.to_datetime(trades_df["Tarih"])
+
+            for _, trade in trades_df.iterrows():
+                # İşlemin olduğu mumu bul
+                match = df_final[df_final["time"] == trade["timestamp"].timestamp()]
+                if not match.empty:
+                    idx = match.index[0]
+                    tur = trade["Tür"]
+
+                    # Sinyal kodları: 1=AL(Yeşil Ok), -1=SAT(Kırmızı Ok)
+                    if "AL" in tur:
+                        df_final.at[idx, "signal"] = 1
+                    elif "SAT" in tur or "TP" in tur or "STOP" in tur:
+                        df_final.at[idx, "signal"] = -1
+
+        # 7. GEREKSİZ VERİYİ TEMİZLE VE GÖNDER
+        # SMA yoksa kapanış fiyatını koy (Çizgi düzgün görünsün)
+        if "HMA_9" in df_final.columns:
+            df_final["sma"] = df_final["HMA_9"]
+        elif "SMA" in df_final.columns:
+            df_final["sma"] = df_final["SMA"]
+        else:
+            df_final["sma"] = df_final["close"]
+
+        df_final = df_final.fillna(0)
+
+        export_cols = ["time", "open", "high", "low", "close", "sma", "signal"]
+        return df_final[export_cols].to_dict(orient="records")
 
     except Exception as e:
-        print(f"API Hatası: {e}")
+        print(f"🔥 API Hatası: {e}")
         return []
 
 
