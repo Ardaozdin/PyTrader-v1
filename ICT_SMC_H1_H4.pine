@@ -1,0 +1,456 @@
+//@version=6
+// ============================================================================
+// ICT / SMC Pro Sinyal Sistemi  -  H1 İşlem / H4 Bias Filtreli
+// ----------------------------------------------------------------------------
+// Bu gösterge ICT (Inner Circle Trader) / SMC (Smart Money Concepts) mantığında
+// çalışır. Ana işlem zaman dilimi H1, üst zaman dilimi filtresi H4'tür.
+// Tüm hesaplamalar KAPANMIŞ barlar üzerinden yapılır => REPAINT YAPMAZ.
+// ============================================================================
+indicator("ICT/SMC Pro - H1/H4 Signal System", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, max_bars_back = 500)
+
+// ============================================================================
+// 1) KULLANICI AYARLARI (INPUTS)
+// ============================================================================
+grpStr   = "Yapı / Market Structure"
+swingLen = input.int(5, "Swing Pivot Uzunluğu", minval = 2, maxval = 50, group = grpStr, tooltip = "1H için 5 önerilir. Küçültürsen daha çok yapı kırılımı = daha çok sinyal.")
+
+grpHTF   = "Üst Zaman Dilimi (HTF)"
+htfTf    = input.timeframe("240", "H4 Bias Zaman Dilimi", group = grpHTF, tooltip = "Bias için kullanılan üst zaman dilimi. Varsayılan 4 Saat (240).")
+
+grpLiq   = "Likidite"
+eqTol    = input.float(0.05, "Equal High/Low Toleransı (%)", minval = 0.0, step = 0.01, group = grpLiq, tooltip = "İki seviyenin 'eşit' sayılması için yüzdesel tolerans.")
+
+grpFVG   = "Fair Value Gap (FVG)"
+showFvg  = input.bool(false, "FVG Bölgelerini Çiz", group = grpFVG, tooltip = "Sade görünüm için varsayılan KAPALI. FVG mantığı yine de sinyalde kullanılır.")
+fvgMaxLen= input.int(50, "FVG Maksimum Bar Uzunluğu", minval = 5, group = grpFVG, tooltip = "FVG kutusunun ileriye doğru kaç bar gösterileceği.")
+
+grpPD    = "Premium / Discount"
+showPD   = input.bool(true, "Premium/Discount Bölgesini Göster", group = grpPD)
+
+grpRisk  = "Risk Yönetimi"
+slBufPct = input.float(0.05, "Stop Buffer (%)", minval = 0.0, step = 0.01, group = grpRisk, tooltip = "Stop seviyesine eklenen güvenlik payı.")
+tp1R     = input.float(1.0, "TP1 (R katı)", minval = 0.1, step = 0.1, group = grpRisk)
+tp2R     = input.float(2.0, "TP2 (R katı)", minval = 0.1, step = 0.1, group = grpRisk)
+tp3R     = input.float(3.0, "TP3 (R katı)", minval = 0.1, step = 0.1, group = grpRisk)
+
+grpViz   = "Görsel"
+showTable= input.bool(true, "Bilgi Tablosunu Göster", group = grpViz)
+showLevels= input.bool(false, "SL/TP Çizgilerini Göster", group = grpViz)
+showStruct= input.bool(false, "Yapı Etiketleri (BOS/MSS/EQH/Sweep)", group = grpViz, tooltip = "Sade görünüm için varsayılan KAPALI.")
+
+// ============================================================================
+// 2) SWING HIGH / SWING LOW (PIVOT) TESPİTİ
+// ----------------------------------------------------------------------------
+// ta.pivothigh/low, 'swingLen' bar geride onaylanır => repaint yapmaz.
+// ============================================================================
+ph = ta.pivothigh(high, swingLen, swingLen)   // Swing High pivotu (onaylandığında değer döner)
+pl = ta.pivotlow(low,  swingLen, swingLen)     // Swing Low pivotu
+
+// En son onaylanan swing seviyeleri
+var float lastSwingHigh  = na
+var float prevSwingHigh  = na   // bir önceki swing high (BOS/MSS karşılaştırması için)
+var float lastSwingLow   = na
+var float prevSwingLow   = na
+
+if not na(ph)
+    prevSwingHigh := lastSwingHigh
+    lastSwingHigh := ph
+if not na(pl)
+    prevSwingLow := lastSwingLow
+    lastSwingLow := pl
+
+// ============================================================================
+// 3) MARKET STRUCTURE: BOS / MSS / CHOCH
+// ----------------------------------------------------------------------------
+// Trend takibi: +1 bullish, -1 bearish, 0 nötr.
+// BOS  = mevcut trend yönünde yapı kırılımı.
+// MSS/CHOCH = trende KARŞI yapı kırılımı (yön değişimi).
+// Kapanış bazlı kırılım => repaint yok.
+// ============================================================================
+var int   trendDir = 0        // -1, 0, +1
+var bool  bosUp    = false    // bu barda yukarı yönlü BOS
+var bool  bosDn    = false    // bu barda aşağı yönlü BOS
+var bool  mssUp    = false    // bu barda yukarı yönlü MSS/CHOCH
+var bool  mssDn    = false    // bu barda aşağı yönlü MSS/CHOCH
+
+bosUp := false
+bosDn := false
+mssUp := false
+mssDn := false
+
+// Yukarı kırılım: kapanış son swing high'ı geçtiyse
+brokeHigh = not na(lastSwingHigh) and close > lastSwingHigh
+// Aşağı kırılım: kapanış son swing low'un altına indiyse
+brokeLow  = not na(lastSwingLow)  and close < lastSwingLow
+
+if brokeHigh and barstate.isconfirmed
+    if trendDir <= 0
+        mssUp := true            // bearish/nötrden yukarı dönüş => MSS / CHOCH
+    else
+        bosUp := true            // zaten bullish => BOS
+    trendDir := 1
+    lastSwingHigh := na          // aynı seviyeden tekrar tetiklenmeyi engelle
+
+if brokeLow and barstate.isconfirmed
+    if trendDir >= 0
+        mssDn := true            // bullish/nötrden aşağı dönüş => MSS / CHOCH
+    else
+        bosDn := true            // zaten bearish => BOS
+    trendDir := -1
+    lastSwingLow := na
+
+// Yapı etiketleri
+if showStruct and bosUp
+    label.new(bar_index, low, "BOS", style = label.style_label_up, color = color.new(color.teal, 30), textcolor = color.white, size = size.tiny)
+if showStruct and bosDn
+    label.new(bar_index, high, "BOS", style = label.style_label_down, color = color.new(color.maroon, 30), textcolor = color.white, size = size.tiny)
+if showStruct and mssUp
+    label.new(bar_index, low, "MSS", style = label.style_label_up, color = color.new(color.green, 0), textcolor = color.white, size = size.tiny)
+if showStruct and mssDn
+    label.new(bar_index, high, "MSS", style = label.style_label_down, color = color.new(color.red, 0), textcolor = color.white, size = size.tiny)
+
+// ============================================================================
+// 4) H4 BIAS (ÜST ZAMAN DİLİMİ MARKET STRUCTURE)
+// ----------------------------------------------------------------------------
+// H4 pivotlarına göre bias hesaplanır. request.security içinde lookahead_off
+// ve [1] (bir önceki kapanmış HTF barı) kullanılarak REPAINT engellenir.
+// ============================================================================
+htfBias() =>
+    h  = high
+    l  = low
+    c  = close
+    pH = ta.pivothigh(h, 3, 3)
+    pL = ta.pivotlow(l, 3, 3)
+    var float shH = na
+    var float slL = na
+    var int   dir = 0
+    if not na(pH)
+        shH := pH
+    if not na(pL)
+        slL := pL
+    if not na(shH) and c > shH
+        dir := 1
+    if not na(slL) and c < slL
+        dir := -1
+    dir
+
+// Non-repaint güvenli HTF çağrısı: gerçek zamanlı barda bir önceki onaylı değeri kullan
+htfDir = request.security(syminfo.tickerid, htfTf, htfBias(), lookahead = barmerge.lookahead_off)
+biasBull = htfDir ==  1
+biasBear = htfDir == -1
+biasText = biasBull ? "Bullish" : biasBear ? "Bearish" : "Neutral"
+
+// ============================================================================
+// 5) LİKİDİTE: EQUAL HIGH/LOW + LIQUIDITY SWEEP
+// ----------------------------------------------------------------------------
+// Equal High/Low: ardışık swing seviyeleri tolerans içindeyse.
+// Sweep: önceki swing seviyesinin fitille aşılıp kapanışla geri alınması.
+// ============================================================================
+eqHigh = not na(prevSwingHigh) and not na(lastSwingHigh) and math.abs(lastSwingHigh - prevSwingHigh) <= prevSwingHigh * eqTol / 100.0
+eqLow  = not na(prevSwingLow)  and not na(lastSwingLow)  and math.abs(lastSwingLow  - prevSwingLow)  <= prevSwingLow  * eqTol / 100.0
+
+// Equal High / Equal Low etiketleri (likidite havuzları)
+if showStruct and eqHigh and not na(ph)
+    label.new(bar_index - swingLen, lastSwingHigh, "EQH", style = label.style_label_down, color = color.new(color.blue, 30), textcolor = color.white, size = size.tiny)
+if showStruct and eqLow and not na(pl)
+    label.new(bar_index - swingLen, lastSwingLow, "EQL", style = label.style_label_up, color = color.new(color.blue, 30), textcolor = color.white, size = size.tiny)
+
+// Buy Side Liquidity Sweep: fitil önceki swing high'ı geçti AMA kapanış altında kaldı
+buySideSweep  = not na(prevSwingHigh) and high > prevSwingHigh and close < prevSwingHigh and barstate.isconfirmed
+// Sell Side Liquidity Sweep: fitil önceki swing low'u kırdı AMA kapanış üstünde kaldı
+sellSideSweep = not na(prevSwingLow)  and low  < prevSwingLow  and close > prevSwingLow  and barstate.isconfirmed
+
+if showStruct and buySideSweep
+    label.new(bar_index, high, "BSL✗", style = label.style_label_down, color = color.new(color.orange, 20), textcolor = color.black, size = size.tiny)
+if showStruct and sellSideSweep
+    label.new(bar_index, low, "SSL✗", style = label.style_label_up, color = color.new(color.orange, 20), textcolor = color.black, size = size.tiny)
+
+// ============================================================================
+// 6) FAIR VALUE GAP (FVG)
+// ----------------------------------------------------------------------------
+// Bullish FVG: low[0] > high[2]  (2 bar önceki tepe ile mevcut dip arası boşluk)
+// Bearish FVG: high[0] < low[2]
+// Kutular kapanmış barlar üzerinden çizilir => repaint yok.
+// ============================================================================
+bullFvg = low > high[2] and barstate.isconfirmed
+bearFvg = high < low[2] and barstate.isconfirmed
+
+// Aktif FVG seviyeleri (entry desteği için son geçerli FVG saklanır)
+var float bullFvgTop = na
+var float bullFvgBot = na
+var float bearFvgTop = na
+var float bearFvgBot = na
+
+if bullFvg
+    bullFvgBot := high[2]
+    bullFvgTop := low
+    if showFvg
+        box.new(bar_index - 2, bullFvgTop, bar_index + fvgMaxLen, bullFvgBot, border_color = color.new(color.green, 60), bgcolor = color.new(color.green, 85))
+if bearFvg
+    bearFvgTop := high
+    bearFvgBot := low[2]
+    if showFvg
+        box.new(bar_index - 2, bearFvgTop, bar_index + fvgMaxLen, bearFvgBot, border_color = color.new(color.red, 60), bgcolor = color.new(color.red, 85))
+
+// Fiyat aktif bullish FVG bölgesinde mi? (discount destek)
+inBullFvg = not na(bullFvgTop) and not na(bullFvgBot) and low <= bullFvgTop and close >= bullFvgBot
+inBearFvg = not na(bearFvgTop) and not na(bearFvgBot) and high >= bearFvgBot and close <= bearFvgTop
+
+// ============================================================================
+// 7) PREMIUM / DISCOUNT / EQUILIBRIUM
+// ----------------------------------------------------------------------------
+// Son swing range (lastSwingHigh referansı için pivotları kullanırız).
+// Range = en güncel swing high & low. Eşik: %50 EQ, üstü Premium, altı Discount.
+// ============================================================================
+var float rangeHigh = na
+var float rangeLow  = na
+rangeHigh := not na(ph) ? ph : rangeHigh
+rangeLow  := not na(pl) ? pl : rangeLow
+
+eqLevel   = not na(rangeHigh) and not na(rangeLow) ? (rangeHigh + rangeLow) / 2.0 : na
+inDiscount= not na(eqLevel) and close < eqLevel
+inPremium = not na(eqLevel) and close > eqLevel
+
+if showPD and not na(eqLevel)
+    line.new(bar_index - 1, eqLevel, bar_index, eqLevel, extend = extend.none, color = color.new(color.gray, 0), style = line.style_dotted)
+
+// ============================================================================
+// 8) ENTRY LOGIC (AL / SAT KURULUMU)
+// ----------------------------------------------------------------------------
+// AL:  H4 Bullish + Sell Side Sweep + (MSS|BOS up) + Discount + Bullish FVG
+// SAT: H4 Bearish + Buy Side Sweep  + (MSS|BOS dn) + Premium  + Bearish FVG
+// ============================================================================
+// Sinyal ayarları
+grpSig    = "Sinyal"
+entryMode = input.string("Her İkisi", "Giriş Modu", options = ["BOS Kırılımı", "FVG Geri Çekilme", "Her İkisi"], group = grpSig, tooltip = "BOS Kırılımı: yapı kırılımında devam girişi. FVG Geri Çekilme: kırılım sonrası FVG'ye dönüşte giriş.")
+confWin   = input.int(30, "Confluence / Geçerlilik Penceresi (bar)", minval = 1, maxval = 100, group = grpSig, tooltip = "Yapı kırılımı kaç mum boyunca geçerli sayılsın. Büyütürsen daha çok sinyal.")
+minScore  = input.int(3, "Minimum Sinyal Skoru (8 üzerinden)", minval = 2, maxval = 8, group = grpSig, tooltip = "Düşürürsen daha çok, yükseltirsen daha az ama daha belirleyici sinyal.")
+reqBias   = input.bool(true, "H4 Bias Zorunlu", group = grpSig, tooltip = "Kapatırsan trend yönüne göre de sinyal üretir (daha çok işlem).")
+reqStruct = input.bool(true, "BOS/MSS Zorunlu", group = grpSig, tooltip = "AÇIK: yapı kırılımı olmadan sinyal çıkmaz (daha temiz). Kapatırsan daha çok ama daha kirli sinyal.")
+
+grpFlt    = "Trend & Kalite Filtreleri"
+useEma    = input.bool(true, "EMA Trend Filtresi", group = grpFlt, tooltip = "Sadece EMA50>EMA200 ve fiyat EMA50 üstündeyken AL verir. Tepede/karşı trend sinyalleri keser.")
+emaFastLn = input.int(50, "Hızlı EMA", minval = 5, group = grpFlt)
+emaSlowLn = input.int(100, "Yavaş EMA", minval = 20, group = grpFlt)
+useExt    = input.bool(true, "Aşırı Uzama Filtresi", group = grpFlt, tooltip = "Fiyat EMA'dan çok uzaktaysa (tepede) AL vermez. 'Al-sonra-stop' durumunu azaltır.")
+maxExtAtr = input.float(3.5, "Maks. Uzaklık (ATR katı)", minval = 0.5, step = 0.1, group = grpFlt)
+useVol    = input.bool(true, "Hacim Filtresi", group = grpFlt, tooltip = "AÇIK: sinyal mumunun hacmi ortalamanın üstünde olmalı. Hacimsiz (fake) kırılımları eler.")
+volLen    = input.int(20, "Hacim Ortalama Periyodu", minval = 2, group = grpFlt)
+volMult   = input.float(1.0, "Hacim Çarpanı", minval = 0.5, step = 0.1, group = grpFlt, tooltip = "Hacim, ortalamanın bu katından büyük olmalı. 1.5 yaparsan daha sıkı.")
+useDirBar = input.bool(true, "Sinyal Mumu Yönü Şartı", group = grpFlt, tooltip = "AÇIK: AL sadece YEŞİL (kapanış>açılış) mumda çıkar; hacim alış yönünde sayılır. Kırmızı mumda AL gelmez.")
+onlyLong  = input.bool(true, "Sadece AL Sinyalleri", group = grpSig, tooltip = "Açıkken SAT sinyali üretilmez.")
+cooldown  = input.int(3, "Sinyaller Arası Min. Bar (Bekleme)", minval = 0, maxval = 200, group = grpSig, tooltip = "Art arda sinyalleri eler. Büyütürsen daha seyrek, belirleyici sinyal.")
+
+structUp = mssUp or bosUp
+structDn = mssDn or bosDn
+
+// "Son confWin mum içinde gerçekleşti mi?" yardımcı fonksiyonu
+recent(cond) =>
+    bs = ta.barssince(cond)
+    not na(bs) and bs <= confWin
+
+// Yönlü, ZAMANA YAYILMIŞ confluence bayrakları (artık tek mumda olma şartı yok)
+rSweepUp = recent(sellSideSweep)   // bullish kurulum için sell-side sweep
+rSweepDn = recent(buySideSweep)    // bearish kurulum için buy-side sweep
+rStrUp   = recent(structUp)
+rStrDn   = recent(structDn)
+rMssUp   = recent(mssUp)
+rMssDn   = recent(mssDn)
+rBosUp   = recent(bosUp)
+rBosDn   = recent(bosDn)
+rFvgUp   = inBullFvg or recent(bullFvg)
+rFvgDn   = inBearFvg or recent(bearFvg)
+
+// ============================================================================
+// 9) KALİTE PUANLAMA (CANLI CHECKLIST + GRADE)
+// ----------------------------------------------------------------------------
+// Tablo artık her mumda CANLI güncellenir. Yön: H4 bias; nötrse iç trend.
+// ============================================================================
+useLong = biasBull ? true : biasBear ? false : (trendDir >= 0)
+
+cBias   = useLong ? biasBull : biasBear
+cSweep  = useLong ? rSweepUp : rSweepDn
+cMss    = useLong ? rMssUp   : rMssDn
+cBos    = useLong ? rBosUp   : rBosDn
+cFvg    = useLong ? rFvgUp   : rFvgDn
+cPD     = useLong ? inDiscount : inPremium
+cTarget = useLong ? not na(prevSwingHigh) : not na(prevSwingLow)
+cTrend  = useLong ? (trendDir == 1) : (trendDir == -1)
+
+score = (cBias?1:0) + (cSweep?1:0) + (cMss?1:0) + (cBos?1:0) + (cFvg?1:0) + (cPD?1:0) + (cTarget?1:0) + (cTrend?1:0)
+grade = score >= 8 ? "A+" : score == 7 ? "A" : score == 6 ? "A-" : score == 5 ? "B+" : score == 4 ? "B" : "C"
+
+// ============================================================================
+// YENİ GİRİŞ MANTIĞI (BIST/Hisse için pratik, daha sık)
+// ----------------------------------------------------------------------------
+// 1) BOS Kırılımı: yapı yukarı kırıldığı an devam girişi (bosUp/mssUp).
+// 2) FVG Geri Çekilme: yukarı yapı sonrası fiyat bullish FVG'ye dönerse giriş.
+// ============================================================================
+useBosEntry = entryMode != "FVG Geri Çekilme"
+usePbEntry  = entryMode != "BOS Kırılımı"
+
+// Yön onayı: H4 bias zorunluysa bias'a bak, değilse iç trend de yeterli
+biasOkLong  = reqBias ? biasBull : (biasBull or trendDir == 1)
+biasOkShort = reqBias ? biasBear : (biasBear or trendDir == -1)
+
+// LONG tetikleyiciler
+bosUpTrig = useBosEntry and (bosUp or mssUp)               // kırılım anı
+pbUpTrig  = usePbEntry and inBullFvg and rStrUp            // FVG'ye geri çekilme
+longTrig  = bosUpTrig or pbUpTrig
+
+// SHORT tetikleyiciler
+bosDnTrig = useBosEntry and (bosDn or mssDn)
+pbDnTrig  = usePbEntry and inBearFvg and rStrDn
+shortTrig = bosDnTrig or pbDnTrig
+
+// ZORUNLU FİLTRELER:
+// 1) BOS/MSS yakında olmalı (reqStruct) -> yapısız sinyal yok
+// 2) Mevcut iç trend yönü doğru olmalı -> düşüş trendinde AL çıkmaz
+strOkUp = reqStruct ? rStrUp : true
+strOkDn = reqStruct ? rStrDn : true
+
+// EMA trend filtresi
+emaFast = ta.ema(close, emaFastLn)
+emaSlow = ta.ema(close, emaSlowLn)
+emaUpOk = not useEma or (close > emaSlow)
+emaDnOk = not useEma or (close < emaSlow)
+
+// Aşırı uzama (overextension) filtresi: fiyat EMA'dan çok uzaktaysa giriş yapma
+atr = ta.atr(14)
+extUpOk = not useExt or (close <= emaFast + maxExtAtr * atr)
+extDnOk = not useExt or (close >= emaFast - maxExtAtr * atr)
+
+// Hacim filtresi: sinyal mumunun hacmi ortalamanın üstünde mi?
+volOk = not useVol or (na(volume) ? true : volume > ta.sma(volume, volLen) * volMult)
+
+// Sinyal mumu yönü: AL yeşil mumda, SAT kırmızı mumda
+bullBar = close > open
+bearBar = close < open
+dirUpOk = not useDirBar or bullBar
+dirDnOk = not useDirBar or bearBar
+
+longSetup  = biasOkLong  and longTrig  and strOkUp and trendDir == 1  and emaUpOk and extUpOk and volOk and dirUpOk and score >= minScore
+shortSetup = biasOkShort and shortTrig and strOkDn and trendDir == -1 and emaDnOk and extDnOk and volOk and dirDnOk and score >= minScore
+
+// Bekleme (cooldown): son sinyalden bu yana yeterli bar geçmeden yeni sinyal verme
+var int lastSigBar = na
+canSignal = na(lastSigBar) or (bar_index - lastSigBar) >= cooldown
+
+buySignal  = longSetup  and not longSetup[1] and canSignal
+sellSignal = not onlyLong and shortSetup and not shortSetup[1] and not buySignal and canSignal
+if buySignal or sellSignal
+    lastSigBar := bar_index
+
+isLong  = buySignal
+isShort = sellSignal
+
+// ============================================================================
+// 10) STOP LOSS / TAKE PROFIT HESABI
+// ----------------------------------------------------------------------------
+// SL: son swing low (long) / swing high (short) + buffer.
+// TP: R katları + likidite hedefleri (önceki swing seviyeleri).
+// ============================================================================
+var float entryPrice = na
+var float slPrice = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+
+if buySignal
+    entryPrice := close
+    slBase = not na(lastSwingLow) ? lastSwingLow : low
+    slPrice := slBase * (1 - slBufPct / 100.0)
+    risk = entryPrice - slPrice
+    tp1 := entryPrice + risk * tp1R
+    tp2 := entryPrice + risk * tp2R
+    tp3 := not na(prevSwingHigh) ? math.max(prevSwingHigh, entryPrice + risk * tp3R) : entryPrice + risk * tp3R
+
+if sellSignal
+    entryPrice := close
+    slBase = not na(lastSwingHigh) ? lastSwingHigh : high
+    slPrice := slBase * (1 + slBufPct / 100.0)
+    risk = slPrice - entryPrice
+    tp1 := entryPrice - risk * tp1R
+    tp2 := entryPrice - risk * tp2R
+    tp3 := not na(prevSwingLow) ? math.min(prevSwingLow, entryPrice - risk * tp3R) : entryPrice - risk * tp3R
+
+// SL/TP çizgileri
+if showLevels and (buySignal or sellSignal)
+    line.new(bar_index, slPrice, bar_index + 20, slPrice, color = color.red,    width = 1, style = line.style_dashed)
+    line.new(bar_index, tp1,     bar_index + 20, tp1,     color = color.green,  width = 1, style = line.style_dotted)
+    line.new(bar_index, tp2,     bar_index + 20, tp2,     color = color.green,  width = 1, style = line.style_dotted)
+    line.new(bar_index, tp3,     bar_index + 20, tp3,     color = color.green,  width = 2, style = line.style_solid)
+    label.new(bar_index + 20, slPrice, "SL", style = label.style_label_left, color = color.new(color.red, 40), textcolor = color.white, size = size.tiny)
+    label.new(bar_index + 20, tp1, "TP1", style = label.style_label_left, color = color.new(color.green, 40), textcolor = color.white, size = size.tiny)
+    label.new(bar_index + 20, tp2, "TP2", style = label.style_label_left, color = color.new(color.green, 40), textcolor = color.white, size = size.tiny)
+    label.new(bar_index + 20, tp3, "TP3", style = label.style_label_left, color = color.new(color.green, 0),  textcolor = color.white, size = size.tiny)
+
+// ============================================================================
+// 11) GRAFİK SİNYAL ETİKETLERİ (↑ AL / ↓ SAT)
+// ============================================================================
+// Sade ok işaretleri: AL barın altında yukarı ok, SAT barın üstünde aşağı ok
+plotshape(buySignal,  title = "AL",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.green, 0), text = "AL",  textcolor = color.green, size = size.small)
+plotshape(sellSignal, title = "SAT", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   text = "SAT", textcolor = color.red, size = size.small)
+
+// ============================================================================
+// 12) SAĞ ALT KÖŞE PROFESYONEL TABLO
+// ============================================================================
+yn(b) => b ? "YES" : "NO"
+ynCol(b) => b ? color.new(color.green, 0) : color.new(color.red, 0)
+
+var table tbl = table.new(position.bottom_right, 2, 12, border_width = 1, frame_color = color.gray, frame_width = 1)
+
+if showTable and barstate.islast
+    entryDir = buySignal ? "LONG ✓" : sellSignal ? "SHORT ✓" : useLong ? "Long bekle" : "Short bekle"
+    gColor = grade == "A+" or grade == "A" ? color.new(color.green, 0) : grade == "A-" or grade == "B+" ? color.new(color.orange, 0) : color.new(color.red, 0)
+
+    table.cell(tbl, 0, 0, "SMC SETUP", text_color = color.white, bgcolor = color.new(color.blue, 0), text_size = size.small)
+    table.cell(tbl, 1, 0, grade,       text_color = color.white, bgcolor = gColor, text_size = size.small)
+
+    table.cell(tbl, 0, 1, "Entry", text_color = color.white, bgcolor = color.new(color.black, 20), text_size = size.small)
+    table.cell(tbl, 1, 1, entryDir, text_color = color.white, bgcolor = color.new(color.black, 20), text_size = size.small)
+
+    table.cell(tbl, 0, 2, "Liquidity Sweep", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 2, yn(cSweep), text_color = color.white, bgcolor = ynCol(cSweep), text_size = size.tiny)
+
+    table.cell(tbl, 0, 3, "H4 Bias", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 3, yn(cBias), text_color = color.white, bgcolor = ynCol(cBias), text_size = size.tiny)
+
+    table.cell(tbl, 0, 4, "FVG", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 4, yn(cFvg), text_color = color.white, bgcolor = ynCol(cFvg), text_size = size.tiny)
+
+    table.cell(tbl, 0, 5, "MSS", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 5, yn(cMss), text_color = color.white, bgcolor = ynCol(cMss), text_size = size.tiny)
+
+    table.cell(tbl, 0, 6, "BOS", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 6, yn(cBos), text_color = color.white, bgcolor = ynCol(cBos), text_size = size.tiny)
+
+    table.cell(tbl, 0, 7, "Premium/Discount", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 7, yn(cPD), text_color = color.white, bgcolor = ynCol(cPD), text_size = size.tiny)
+
+    table.cell(tbl, 0, 8, "Clear Targets", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 8, yn(cTarget), text_color = color.white, bgcolor = ynCol(cTarget), text_size = size.tiny)
+
+    table.cell(tbl, 0, 9, "Trend Alignment", text_color = color.white, bgcolor = color.new(color.black, 40), text_size = size.tiny)
+    table.cell(tbl, 1, 9, yn(cTrend), text_color = color.white, bgcolor = ynCol(cTrend), text_size = size.tiny)
+
+    bColor = biasBull ? color.new(color.green, 0) : biasBear ? color.new(color.red, 0) : color.new(color.gray, 0)
+    table.cell(tbl, 0, 10, "Bias", text_color = color.white, bgcolor = color.new(color.black, 20), text_size = size.small)
+    table.cell(tbl, 1, 10, biasText, text_color = color.white, bgcolor = bColor, text_size = size.small)
+
+    table.cell(tbl, 0, 11, "Score", text_color = color.white, bgcolor = color.new(color.black, 20), text_size = size.tiny)
+    table.cell(tbl, 1, 11, str.tostring(score) + "/8", text_color = color.white, bgcolor = color.new(color.black, 20), text_size = size.tiny)
+
+// ============================================================================
+// 13) ALARM SİSTEMİ
+// ============================================================================
+isAgrade = grade == "A+" or grade == "A"
+
+alertcondition(buySignal,  title = "Buy Alert",  message = "ICT/SMC AL Sinyali - {{ticker}} {{interval}}")
+alertcondition(sellSignal, title = "Sell Alert", message = "ICT/SMC SAT Sinyali - {{ticker}} {{interval}}")
+alertcondition((buySignal or sellSignal) and isAgrade, title = "A Grade Setup Alert", message = "ICT/SMC A-Grade Kurulum - {{ticker}} {{interval}}")
+
+if buySignal
+    alert("AL Sinyali | Grade: " + grade + " | Score: " + str.tostring(score) + "/8", alert.freq_once_per_bar_close)
+if sellSignal
+    alert("SAT Sinyali | Grade: " + grade + " | Score: " + str.tostring(score) + "/8", alert.freq_once_per_bar_close)
